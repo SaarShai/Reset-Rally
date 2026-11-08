@@ -7,9 +7,13 @@ import sys
 from pathlib import Path
 
 import conftest
+import rally
+import rally.checks
+import rally.server
+import rally.worker
 
 ROOT = Path(__file__).resolve().parents[1]
-SRC = ROOT / "src"
+SRC = Path(rally.__file__).resolve().parents[1]  # the tree under test, also a mutation copy on -o pythonpath
 FIXTURES = ROOT / "tests" / "fixtures"
 NAMES = ["alice", "bob", "carol", "dave", "eve"]
 ALLOWED_TOP = set(sys.stdlib_module_names) | {"rally"}
@@ -97,21 +101,26 @@ def test_src_names_no_fixture_value():
     for p in src_files():
         found = hits(p.read_text(encoding="utf-8", errors="replace"), NAMES, refs)
         if found:
-            problems[str(p.relative_to(ROOT))] = found
+            problems[str(p.relative_to(SRC))] = found
     assert problems == {}
 
 
 def test_src_names_no_fixture_content():
     content = fixture_content()
-    problems = {str(p.relative_to(ROOT)): found for p in src_files()
+    problems = {str(p.relative_to(SRC)): found for p in src_files()
                 if (found := hits(p.read_text(encoding="utf-8", errors="replace"), [], content))}
     assert problems == {}
 
 
 def test_src_has_no_tst_token():
-    problems = {str(p.relative_to(ROOT)): TST.findall(p.read_text(encoding="utf-8", errors="replace"))
+    problems = {str(p.relative_to(SRC)): TST.findall(p.read_text(encoding="utf-8", errors="replace"))
                 for p in src_files()}
     assert {k: v for k, v in problems.items() if v} == {}
+
+
+def test_scan_root_holds_the_imported_rally():
+    scanned = {p.resolve() for p in src_files()}
+    assert {Path(m.__file__).resolve() for m in (rally.checks, rally.server, rally.worker)} <= scanned
 
 
 def test_fixture_names_carry_tst():

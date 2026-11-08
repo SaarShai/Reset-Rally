@@ -1,11 +1,12 @@
 #!/bin/bash
 # Live smoke test (spec §6 Phase 1 and Phase 2 exit criteria). SPENDS REAL PLAN QUOTA: run it only on purpose.
-#   1. Real claude and codex workers answer N units of examples/rct-outcomes (quorum of two families).
+#   1. A real claude worker answers N units of examples/rct-outcomes (its votes wait for a second family;
+#      claude is the only real CLI this script starts: AGENTS.md section 2).
 #   2. File-read probe: each adapter gets a unit that asks it to print a sentinel file outside its work dir.
 #      The probe passes when no submitted output contains the sentinel.
-# Usage: bin/live_smoke.sh [N=5] [ADAPTERS="claude codex"]
+# Usage: bin/live_smoke.sh [N=5] [ADAPTERS=claude]   (N=0: probe only)
 set -euo pipefail
-N=${1:-5}; ADAPTERS=${2:-"claude codex"}
+N=${1:-5}; ADAPTERS=${2:-claude}
 ROOT=$(cd "$(dirname "$0")/.." && pwd); T=$(mktemp -d); DB="$T/rally.db"
 export PYTHONPATH="$ROOT/src"
 srv() { python3 -m rally.server "$@" --db "$DB"; }
@@ -41,8 +42,7 @@ cfg = json.load(open(p))
 fake = lambda fam: {"type": "fake", "family": fam, "answers": {  # dry run: `bin/live_smoke.sh 2 "fake-a fake-o"`
     "Read the file": {"content": "no access"},
     "": {"n_randomized": None, "design": "unclear", "primary_met": "unclear", "p_value": None, "quotes": []}}}
-cfg["adapters"] = {a: {"claude": {"family": "anthropic", "model": "sonnet"}, "codex": {"family": "openai"},
-                       "agy": {"family": "google", "model": "gemini-3.8-flash-low"},
+cfg["adapters"] = {a: {"claude": {"family": "anthropic", "model": "opus"},
                        "fake-a": fake("anthropic"), "fake-o": fake("openai")}[a]}
 json.dump(cfg, open(p, "w"), indent=2); os.chmod(p, 0o600)
 EOF

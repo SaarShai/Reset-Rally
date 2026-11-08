@@ -4,6 +4,7 @@ import argparse
 import contextlib
 import hashlib
 import json
+import math
 import random
 import secrets
 import sqlite3
@@ -62,6 +63,7 @@ CREATE TABLE IF NOT EXISTS work_units (
   done_at INTEGER
 );
 CREATE INDEX IF NOT EXISTS wu_pick ON work_units (status, project_id, stage, priority);
+CREATE INDEX IF NOT EXISTS wu_canary ON work_units (project_id, created_at) WHERE is_canary = 1;
 CREATE TABLE IF NOT EXISTS leases (
   id TEXT PRIMARY KEY,
   wu_id TEXT NOT NULL REFERENCES work_units(id),
@@ -71,12 +73,14 @@ CREATE TABLE IF NOT EXISTS leases (
   model TEXT,
   status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','submitted','released','expired')),
   reason TEXT,
+  instead_of TEXT,
   issued_at INTEGER NOT NULL,
   expires_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS lease_live ON leases (status, expires_at);
 CREATE INDEX IF NOT EXISTS lease_wu ON leases (wu_id, status);
 CREATE UNIQUE INDEX IF NOT EXISTS lease_once ON leases (wu_id, participant_id);
+CREATE INDEX IF NOT EXISTS lease_instead ON leases (instead_of, participant_id) WHERE instead_of IS NOT NULL;
 CREATE TABLE IF NOT EXISTS submissions (
   id INTEGER PRIMARY KEY,
   wu_id TEXT NOT NULL REFERENCES work_units(id),
@@ -101,19 +105,24 @@ ROLES = ("worker", "owner", "admin")
 MAX_OUTPUT = 262144
 MAX_BODY = 1 << 20
 VOTE_REASONS = {"quorum_lost", "disputed", "quarantined", "canary"}  # rejections after a valid submit (HTTP 200)
-SLOTS_USED = """(SELECT count(*) FROM leases l WHERE l.wu_id = w.id AND l.status = 'active' AND l.id != :skip)
-  + (SELECT count(*) FROM submissions s WHERE s.wu_id = w.id AND s.status IN ('pending','accepted'))"""
-FAMILIES_USED = """SELECT family FROM leases WHERE wu_id = :id AND status = 'active' AND id != :skip
-  UNION SELECT family FROM submissions WHERE wu_id = :id AND status IN ('pending','accepted')"""
+SLOTS_USED = """(SELECT count(*) FROM leases l WHERE l.wu_id = w.id AND l.status = 'active')
+  + (SELECT count(*) FROM submissions s WHERE s.wu_id = w.id AND s.status IN ('pending','accepted'))
+  + (SELECT count(*) FROM leases l WHERE l.instead_of = w.id AND l.status = 'active')"""
+FAMILIES_USED = """SELECT family FROM leases WHERE wu_id = :id AND status = 'active'
+  UNION SELECT family FROM submissions WHERE wu_id = :id AND status IN ('pending','accepted')
+  UNION SELECT family FROM leases WHERE instead_of = :id AND status = 'active'"""
 CANDIDATES = f"""SELECT w.* FROM work_units w JOIN projects p ON p.id = w.project_id
 WHERE w.status = 'open' AND w.is_canary = 0 AND p.status = 'active' AND w.project_id IN ({{ids}})
   AND NOT EXISTS (SELECT 1 FROM leases l WHERE l.wu_id = w.id AND l.participant_id = :me)
+  AND NOT EXISTS (SELECT 1 FROM leases l WHERE l.instead_of = w.id AND l.participant_id = :me
+    AND l.status != 'submitted')
   AND {SLOTS_USED} < w.replicas
 ORDER BY CASE w.project_id {{order}} END, w.priority DESC,
-  EXISTS (SELECT 1 FROM submissions s WHERE s.wu_id = w.id) DESC, w.created_at, w.id"""
+  EXISTS (SELECT 1 FROM submissions s WHERE s.wu_id = w.id) DESC, w.created_at, w.rowid"""
 
 CANARY_PICK = """SELECT * FROM work_units w WHERE project_id = ? AND is_canary = 1
-  AND NOT EXISTS (SELECT 1 FROM leases l WHERE l.wu_id = w.id AND l.participant_id = ?) ORDER BY created_at, id"""
+  AND NOT EXISTS (SELECT 1 FROM leases l WHERE l.wu_id = w.id AND l.participant_id = ?) ORDER BY created_at, rowid"""
+EXPIRE = "UPDATE leases SET status = 'expired' WHERE status = 'active' AND expires_at < ?"
 
 
 class ApiError(Exception):
@@ -147,6 +156,11 @@ def _too_deep(value, limit=64):
 
 def _no_constant(name):
     raise ValueError(f"{name} is not JSON")  # NaN and Infinity would make the export invalid JSON
+
+
+def _finite(text):
+    f = float(text)
+    return f if math.isfinite(f) else _no_constant(text)  # 1e999 parses to inf
 
 
 class Coordinator:
@@ -235,8 +249,6 @@ class Coordinator:
 
     def add_project(self, manifest, units, canaries):
         m = validate_manifest(manifest)
-        if m["canary"]["rate"] > 0 and not canaries:
-            raise ManifestError("canaries: canary.rate > 0 needs at least one canary")
         q = m["verify"].get("quorum")
         rows = [self._unit_row(u, f"units[{i}]") for i, u in enumerate(units)]
         rows += [self._canary_row(k, f"canaries[{i}]") for i, k in enumerate(canaries)]
@@ -246,10 +258,17 @@ class Coordinator:
                               (m["owner"],)).fetchone()
             if owner is None:
                 raise ManifestError(f"owner: no participant {m['owner']!r} with role owner or admin")
-            old = c.execute("SELECT version FROM projects WHERE id = ?", (m["id"],)).fetchone()
+            old = c.execute("SELECT version, manifest FROM projects WHERE id = ?", (m["id"],)).fetchone()
+            stored = c.execute("SELECT 1 FROM work_units WHERE project_id = ? AND is_canary = 1", (m["id"],)).fetchone()
+            if m["canary"]["rate"] > 0 and not (stored if old else canaries):  # a bump stores no canaries
+                raise ManifestError("canaries: canary.rate > 0 needs at least one canary")
             if old:
                 if m["version"] <= old["version"]:
                     raise ManifestError(f"version: must be higher than {old['version']}")
+                was = json.loads(old["manifest"])["verify"]
+                for key in ("mode", "quorum"):  # a vote cast under the old rule must count the same under the new one
+                    if was.get(key) != m["verify"].get(key):
+                        raise ManifestError(f"verify.{key}: a new version may not change it from {was.get(key)!r}")
                 c.execute("UPDATE projects SET manifest = ?, manifest_hash = ?, version = ? WHERE id = ?",
                           (json.dumps(m), h, m["version"], m["id"]))
                 return m["id"]
@@ -335,8 +354,8 @@ class Coordinator:
         st, q = m["stages"]["brain"], m["verify"].get("quorum")
         fams = st.get("needs", {}).get("families")
         used = set()
-        if q and q["distinct_families"] and not wu["is_canary"]:
-            used = {r[0] for r in c.execute(FAMILIES_USED, {"id": wu["id"], "skip": ""})}
+        if q and q["distinct_families"]:
+            used = {r[0] for r in c.execute(FAMILIES_USED, {"id": wu["id"]})}
         for o in offers:
             if (o.get("kind") == "llm" and "json" in o.get("modes", []) and (fams is None or o["family"] in fams)
                     and (max_ttl_s is None or st["timeout_s"] <= max_ttl_s) and o["family"] not in used):
@@ -347,7 +366,7 @@ class Coordinator:
         self._check_lease_request(projects, offers, max_ttl_s)
         with self._tx() as c:
             now = self.now()
-            c.execute("UPDATE leases SET status = 'expired' WHERE status = 'active' AND expires_at < ?", (now,))
+            c.execute(EXPIRE, (now,))
             p = self._active_participant(c, participant_id)
             if p["role"] not in ("worker", "owner"):
                 raise ApiError(403, "role")
@@ -361,31 +380,32 @@ class Coordinator:
                 return None
             names = [f":p{i}" for i in range(len(kept))]
             sql = CANDIDATES.format(ids=", ".join(names), order=" ".join(f"WHEN {n} THEN {i}" for i, n in enumerate(names)))
-            args = {"me": participant_id, "skip": "", **{n[1:]: pid for n, pid in zip(names, kept)}}
+            args = {"me": participant_id, **{n[1:]: pid for n, pid in zip(names, kept)}}
             # no LIMIT 50 (spec 4.1): SQLite scores every candidate before the first row anyway, and a cut-off
             # list can starve a family whose fitting WUs sort later
             for wu in c.execute(sql, args):
                 m = kept[wu["project_id"]]
                 if o := self._fit(c, m, wu, offers, max_ttl_s):
                     # a canary only takes the place of real work, so a lease never proves a canary
-                    rate = m["canary"]["rate"]
+                    rate, real = m["canary"]["rate"], wu
                     if rate > 0 and self.want_canary(p["name"], wu["project_id"], rate):
                         wu = c.execute(CANARY_PICK, (wu["project_id"], participant_id)).fetchone() or wu
-                    return self._grant(c, p, m, wu, o, offers, max_ttl_s, now)
+                    return self._grant(c, p, m, wu, o, offers, max_ttl_s, now, real)
             return None
 
-    def _grant(self, c, p, m, wu, o, offers, max_ttl_s, now):
+    def _grant(self, c, p, m, wu, o, offers, max_ttl_s, now, real):
         st = m["stages"]["brain"]
         ttl = st["lease_ttl_s"] if max_ttl_s is None else min(st["lease_ttl_s"], max_ttl_s + 60)
         lid = secrets.token_hex(8)
-        c.execute("INSERT INTO leases (id, wu_id, participant_id, adapter, family, model, issued_at, expires_at)"
-                  " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                  (lid, wu["id"], p["id"], o["adapter"], o["family"], o.get("model"), now, now + ttl))
+        c.execute("INSERT INTO leases (id, wu_id, participant_id, adapter, family, model, instead_of, issued_at,"
+                  " expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                  (lid, wu["id"], p["id"], o["adapter"], o["family"], o.get("model"),
+                   None if wu is real else real["id"], now, now + ttl))
         c.execute("UPDATE participants SET last_seen = ?, capabilities = ? WHERE id = ?",
                   (now, json.dumps(offers), p["id"]))
         h = c.execute("SELECT manifest_hash FROM projects WHERE id = ?", (wu["project_id"],)).fetchone()[0]
         return {"lease_id": lid, "expires_at": now + ttl, "heartbeat_s": min(300, ttl // 3), "adapter": o["adapter"],
-                "wu": {"id": wu["id"], "project": wu["project_id"], "manifest_hash": h, "stage": "brain",
+                "wu": {"id": real["id"], "project": wu["project_id"], "manifest_hash": h, "stage": "brain",
                        "mode": st["mode"], "prompt": render_prompt(st, json.loads(wu["payload"])),
                        "schema": st["schema"], "timeout_s": st["timeout_s"], "workspace": None, "image": None,
                        "command": None, "files": {}}}
@@ -433,10 +453,13 @@ class Coordinator:
             now = self.now()
             st, q = m["stages"]["brain"], m["verify"].get("quorum")
             late = lease["status"] == "expired" or lease["expires_at"] < now
-            if not wu["is_canary"] and wu["status"] != "open":
+            # a canary lease gets the 409s that its replaced WU W would give, so the reply never tells it apart
+            w = c.execute("SELECT * FROM work_units WHERE id = ?", (lease["instead_of"],)).fetchone() if wu["is_canary"] else wu
+            if w["status"] != "open":
                 raise ApiError(409, "lease_expired" if late else "wu_closed")
-            if late and not wu["is_canary"]:
-                args = {"id": wu["id"], "skip": lease_id}
+            if late:
+                c.execute(EXPIRE, (now,))  # as in lease(): a dead lease never holds a slot
+                args = {"id": w["id"]}  # EXPIRE just made this lease inactive, so it holds no slot
                 free = c.execute(f"SELECT {SLOTS_USED} < w.replicas FROM work_units w WHERE w.id = :id", args).fetchone()[0]
                 clash = q and q["distinct_families"] and lease["family"] in {r[0] for r in c.execute(FAMILIES_USED, args)}
                 if not free or clash:
@@ -652,7 +675,7 @@ class Handler(BaseHTTPRequestHandler):
         if int(n) > MAX_BODY:
             raise ApiError(413, "too_large")
         try:
-            body = json.loads(self.rfile.read(int(n)), parse_constant=_no_constant)
+            body = json.loads(self.rfile.read(int(n)), parse_constant=_no_constant, parse_float=_finite)
         except (ValueError, RecursionError):
             raise ApiError(400, "bad_json") from None
         if _too_deep(body):

@@ -123,6 +123,7 @@ BAD = [
     ("verify.quorum.max_replicas", {"verify__quorum__max_replicas": 4}),  # agree 2: two groups of 2 could win
     ("verify.quorum.replicas", {"verify__quorum__replicas": 4, "verify__quorum__max_replicas": DROP}),  # 2 groups of 2
     ("verify.quorum.max_replicas", {"stages__brain__needs": {"families": ["anthropic", "openai"]}}),  # 3 > 2 families
+    ("verify.quorum.max_replicas", {"stages__brain__needs": {"families": ["anthropic", "anthropic", "openai"]}}),  # 2 distinct
     ("stages.brain.needs.families", {"stages__brain__needs": {"families": []}}),
     ("verify.quorum.digits", {"verify__quorum__digits": 0}),
     ("verify.quorum.digits", {"verify__quorum__digits": 16}),

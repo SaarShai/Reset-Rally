@@ -173,7 +173,8 @@ def test_one_mib_body_is_read(api, world):
 
 
 @pytest.mark.parametrize("raw", [b"{not json", b"[1, 2]", b"\xff\xfe", b"[" * 100_000 + b"]" * 100_000,
-                                 b'{"a":' * 50_000 + b"1" + b"}" * 50_000, b'{"x": NaN}', b'{"x": -Infinity}'])
+                                 b'{"a":' * 50_000 + b"1" + b"}" * 50_000, b'{"x": NaN}', b'{"x": -Infinity}',
+                                 b'{"x": Infinity}', b'{"x": 1e999}', b'{"x": -1e999}'])
 def test_bad_json_bodies_are_400(api, world, raw):
     people, _ = world
     code, body, _ = call(api, "POST", "/v1/lease", token=people["tst-w1"]["token"], raw=raw)

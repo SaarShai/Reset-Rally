@@ -55,7 +55,7 @@ class Client:
         self.server, self.token = server.rstrip("/"), token
 
     def _call(self, method, path, body=None):
-        data = None if body is None else json.dumps(body).encode()
+        data = None if body is None else json.dumps(body, allow_nan=False).encode()  # inf or nan is no JSON
         req = urllib.request.Request(self.server + path, data=data, method=method)
         if data is not None:
             req.add_header("Content-Type", "application/json")
@@ -202,13 +202,14 @@ class Worker:
                 and (self.max_tasks is None or self.done < self.max_tasks))
 
     def _post_lease(self, lease_id, action, body):
-        """Submit or release. A 4xx means the lease is gone: drop it, no retry."""
+        """Submit or release. A 4xx drops the lease, no retry, and returns its code."""
         try:
             return self.client.post(f"/v1/leases/{urllib.parse.quote(lease_id, safe='')}/{action}", body)
         except ApiError as e:
             if e.code >= 500:
                 raise
             self.log(f"lease {lease_id}: {action} refused ({e.code} {e.body}); dropped")
+            return e.code
 
     def _release(self, lease_id, reason):
         self._post_lease(lease_id, "release", {"reason": reason})
@@ -266,13 +267,14 @@ class Worker:
                 if (why := check_schema(out, wu["schema"])) is None:
                     reply = self._post_lease(lid, "submit", {"output": out, "usage": usage})
                     st["done"], self.done = st["done"] + 1, self.done + 1
-                    if reply is not None:  # None: a 4xx (422 failed a server check), so it counts as an error
+                    if not isinstance(reply, int):
                         st["errors"] = 0
                         self.log(f"{name}: {wu['project']}/{wu['id']} submitted: {reply}")
                         return True
-                    st["errors"] += 1
-                    st["disabled"] = st["errors"] >= 3
-                    self.log(f"{name}: submit refused" + ("; disabled for this run" * st["disabled"]))
+                    if reply != 409:  # a 409 (lease expired, unit closed) is no fault of the adapter
+                        st["errors"] += 1
+                        st["disabled"] = st["errors"] >= 3
+                    self.log(f"{name}: submit refused ({reply})" + ("; disabled for this run" * st["disabled"]))
                     return True
                 status, usage["error"] = "error", why
         except KeyboardInterrupt:
@@ -369,15 +371,20 @@ def cmd_doctor(args):
     return 0
 
 
+def _shown(text):
+    """Owner text with each control character but \\t and \\n as \\xNN, so it cannot drive the terminal."""
+    return re.sub(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]", lambda m: f"\\x{ord(m[0]):02x}", text)
+
+
 def cmd_join(args):
     cfg = load_config()
     p = _client(cfg).get(f"/v1/projects/{urllib.parse.quote(args.project, safe='')}")
     stage = p["stages"]["brain"]
-    print(f"Project:  {p['id']} - {p['title']}")
+    print(f"Project:  {p['id']} - {_shown(p['title'])}")
     print(f"Track:    {p['track']}; stage mode: {stage['mode']}")
-    print(f"Families: {', '.join(stage.get('needs', {}).get('families', [])) or 'any'}")
+    print(f"Families: {_shown(', '.join((stage.get('needs') or {}).get('families') or [])) or 'any'}")
     print(f"Verify:   {p['verify']['mode']}")
-    print(f"Prompt template:\n{stage['prompt']}")
+    print(f"Prompt template:\n{_shown(stage['prompt'])}")
     if not args.yes and input("Join this project? [y/N] ").strip().lower() not in ("y", "yes"):
         print("not joined")
         return 1

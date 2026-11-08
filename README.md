@@ -4,7 +4,7 @@
 
 **Status (2026-11-08):** Phases 1 and 2 of the [build plan](docs/specs/architecture-and-build-plan.md) are built: the `brain` track, JSON mode, deterministic checks, cross-family quorum with a tie-breaker, canaries and quarantine, and the `claude`, `codex`, `agy`, `opencode` and `fake` adapters. The `brawn` and `relay` tracks, holdout checks, the Pre-Reset Drain scheduler, `ollama` and YAML manifests are design only.
 
-**Live check (2026-11-08, [`bin/live_smoke.sh`](bin/live_smoke.sh)):** real `codex` answered 6 units of the example project. A file-read probe showed that `codex --sandbox read-only` alone lets the model read a local file and submit it; the worker now turns codex's tools off, and the same probe gets no file text. The `claude` run did not start (the CLI login on the test Mac had expired). `agy` and `opencode` are not probed yet and can still read files: join only projects from owners you trust.
+**Live check (2026-11-08, [`bin/live_smoke.sh`](bin/live_smoke.sh)):** real `claude` and `codex` workers answered 5 units each; on 3 the two families agreed and the units are done, and 2 conflicts wait for a third family. `agy` answered 2 units. A file-read probe asks each adapter to return a secret file: `codex --sandbox read-only` alone returned it, so the worker now turns codex's tools off, and the probe then gets no file text. `claude --tools ""` and headless `agy` returned no file text. `opencode` is not cleared yet: join only projects from owners you trust.
 
 Millions of subscribers leave unused tokens on flat-rate AI plans (`ChatGPT`, `Claude`, `OpenCode`, `Google AI Pro`) when their 5-hour, daily, weekly, or monthly limits reset. At the same time, millions of personal GPUs and Apple Silicon Macs sit idle overnight.
 
@@ -73,7 +73,7 @@ You need Python 3.11 or later. There are no other dependencies. These steps use 
 
 Tests: `python3 -m pytest -q`. They use only `127.0.0.1` and fake adapters.
 
-**Before you join a project:** `codex --sandbox read-only`, `agy --mode plan` and `opencode --agent plan` still let the model read files. Only `claude --tools ""` removes file access. Join only projects from owners you trust ([ADR-0001](docs/adr/0001-pull-based-zero-credential-execution.md)).
+**Before you join a project:** a project prompt can ask the model to read your files. `claude --tools ""` gives it no tool. For codex the worker turns the file and shell tools off (`CODEX_TOOLS_OFF`); probe again after a codex upgrade, which can add tools. Headless `agy` asks for `read_file` and gets no permission. `opencode --agent plan` is not cleared. Join only projects from owners you trust ([ADR-0001](docs/adr/0001-pull-based-zero-credential-execution.md)).
 
 ---
 

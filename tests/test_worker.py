@@ -105,9 +105,11 @@ def test_build_argv_claude():
 def test_build_argv_codex():
     argv, stdin = build_argv("codex", {"model": "gpt-5"}, wu(), "/tmp/x")
     assert argv == ["codex", "exec", "--sandbox", "read-only", "--skip-git-repo-check", "--ephemeral",
-                    "-C", "/tmp/x", "-o", os.path.join("/tmp/x", "last.txt"), *W.CODEX_TOOLS_OFF, "-c", "mcp_servers={}",
-                    "-m", "gpt-5", "-"]
-    assert {"shell_tool", "unified_exec", "code_mode_host"} <= set(W.CODEX_TOOLS_OFF[1::2])  # the file-read paths
+                    "-C", "/tmp/x", "-o", os.path.join("/tmp/x", "last.txt"),
+                    *[x for f in ("shell_tool", "unified_exec", "code_mode_host", "apps", "plugins", "browser_use",
+                                  "computer_use", "multi_agent", "view_image", "image_generation")
+                      for x in ("--disable", f)],
+                    "-c", "mcp_servers={}", "-m", "gpt-5", "-"]
     assert stdin == PROMPT
 
 
@@ -264,6 +266,15 @@ def test_run_adapter_big_prompt_is_error_without_running():
     for atype in ("agy", "opencode"):  # an argv prompt has a lower cap
         assert run_adapter(atype, {}, wu(prompt="x" * 100_001), runner=lambda *a, **k: calls.append(a))[0] == "error"
     assert calls == []
+
+
+@pytest.mark.parametrize("atype", ["claude", "codex"])
+def test_run_adapter_stdin_types_run_a_prompt_over_the_argv_cap(shim, atype):
+    out = json.dumps({"kind": "a"})
+    shim["script"](**({"file": out} if atype == "codex" else {"stdout": out}))
+    big = "x" * 100_001
+    assert run_adapter(atype, {}, wu(prompt=big), runner=shim["runner"])[0] == "ok"
+    assert shim["seen"]()["stdin"] == big
 
 
 def test_run_adapter_codex_without_o_file_is_error(shim):
@@ -492,11 +503,43 @@ def test_step_submit_409_is_dropped_without_retry():
     assert client.paths() == ["lease", "leases/L1/submit"]
 
 
-def test_step_refused_submits_count_as_errors_and_disable_the_adapter():
-    client = StubClient([lease(i) for i in range(1, 5)], submit=ApiError(422, {"status": "rejected", "reason": "x"}))
+@pytest.mark.parametrize("code", [422, 400, 404, 401])  # a 4xx on submit but 409 is an adapter error
+def test_step_refused_submits_count_as_errors_and_disable_the_adapter(code):
+    client = StubClient([lease(i) for i in range(1, 5)], submit=ApiError(code, {"error": "x"}))
     w, _, _ = make_worker(client)
     assert [w.step() for _ in range(4)] == [True, True, True, False]
     assert len(client.bodies("submit")) == 3 and client.bodies("release") == []
+
+
+def test_step_submit_409s_leave_the_adapter_usable():
+    client = StubClient([lease(i) for i in range(1, 5)], submit=ApiError(409, {"error": "lease_expired"}))
+    w, _, logs = make_worker(client)
+    assert [w.step() for _ in range(4)] == [True] * 4
+    assert len(client.bodies("submit")) == 4 and client.bodies("release") == []
+    assert w.state["fk"]["errors"] == 0 and not w.state["fk"]["disabled"] and any("409" in str(x) for x in logs)
+
+
+def test_step_submit_409_keeps_the_error_count_as_it_was():
+    client = StubClient([lease(i) for i in range(1, 6)], submit=ApiError(422, {"error": "x"}))
+    w, _, _ = make_worker(client)
+    w.step(), w.step()
+    client.submit = ApiError(409, {"error": "wu_closed"})
+    w.step()
+    assert w.state["fk"]["errors"] == 2  # neither counted nor reset
+    client.submit = ApiError(422, {"error": "x"})
+    assert w.step() is True and w.state["fk"]["disabled"]
+
+
+def test_step_non_finite_output_releases_error_and_never_submits(api):
+    api["routes"].update({("POST", "/v1/lease"): (200, lease()),
+                          ("POST", "/v1/leases/L1/submit"): (200, {"status": "accepted", "points": 1}),
+                          ("POST", "/v1/leases/L1/release"): (200, {"ok": True})})
+    cfg = cfg_with(fk={"type": "fake", "family": "openai", "answers": {"": '{"kind": "a", "n": 1e999}'}})
+    w, _, logs = make_worker(Client(api["url"], "tok"), cfg)
+    assert w.step() is True
+    assert [r["path"] for r in api["seen"]] == ["/v1/lease", "/v1/leases/L1/release"]
+    assert api["seen"][1]["body"] == {"reason": "error"} and w.state["fk"]["errors"] == 1
+    assert "Infinity" not in json.dumps([r["body"] for r in api["seen"]])
 
 
 def test_step_lease_401_is_raised_not_a_quiet_stop():
@@ -505,11 +548,14 @@ def test_step_lease_401_is_raised_not_a_quiet_stop():
         w.step()
 
 
-def test_client_follows_no_redirect(api):
-    api["routes"][("GET", "/v1/me")] = (302, None, {"Location": api["url"] + "/v1/elsewhere"})
+@pytest.mark.parametrize("method,code", [("GET", 302), ("POST", 302), ("POST", 307)])
+def test_client_follows_no_redirect(api, method, code):
+    path = "/v1/me" if method == "GET" else "/v1/lease"
+    api["routes"][(method, path)] = (code, None, {"Location": api["url"] + "/v1/elsewhere"})
+    c = Client(api["url"], "tok")
     with pytest.raises(ApiError) as e:
-        Client(api["url"], "tok").get("/v1/me")
-    assert e.value.code == 302 and [r["path"] for r in api["seen"]] == ["/v1/me"]  # the token went nowhere else
+        c.get(path) if method == "GET" else c.post(path, {"projects": {}})
+    assert e.value.code == code and [r["path"] for r in api["seen"]] == [path]  # the token went nowhere else
 
 
 def test_step_release_409_is_dropped_without_retry():
@@ -754,6 +800,30 @@ def test_cli_join_shows_manifest_pins_hash_and_leave(api, home, capsys, monkeypa
     assert W.load_config(home)["projects"] == {"tst-p1": "sha256:bb"}
     assert W.main(["leave", "tst-p1"]) == 0
     assert W.load_config(home)["projects"] == {}
+
+
+def test_cli_join_escapes_control_chars_in_owner_text(api, home, capsys):
+    W.save_config({"server": api["url"], "token": "tok", "projects": {}, "adapters": {}}, home)
+    api["routes"][("GET", "/v1/projects/tst-p1")] = (200, {
+        "id": "tst-p1", "title": "T\x1b]0;x\x07", "track": "brain", "manifest_hash": "sha256:bb",
+        "stages": {"brain": {"mode": "json", "prompt": "Line 1\n\tLine 2 \x1b[8mHIDDEN\x1b[0m \x7f\x9b\r",
+                             "needs": {"families": ["goo\x1b[2Jgle", "openai"]}}},
+        "verify": {"mode": "quorum"}})
+    assert W.main(["join", "tst-p1", "--yes"]) == 0
+    out = capsys.readouterr().out
+    assert not any(ord(c) < 32 and c not in "\n\t" or 0x7f <= ord(c) <= 0x9f for c in out)
+    assert "T\\x1b]0;x\\x07\n" in out
+    assert "goo\\x1b[2Jgle, openai\n" in out
+    assert "Line 1\n\tLine 2 \\x1b[8mHIDDEN\\x1b[0m \\x7f\\x9b\\x0d\n" in out
+
+
+def test_cli_join_shows_any_when_families_is_null(api, home, capsys):
+    W.save_config({"server": api["url"], "token": "tok", "projects": {}, "adapters": {}}, home)
+    api["routes"][("GET", "/v1/projects/tst-p1")] = (200, {
+        "id": "tst-p1", "title": "T", "track": "brain", "manifest_hash": "sha256:bb",
+        "stages": {"brain": {"mode": "json", "prompt": "P", "needs": {"families": None}}}, "verify": {"mode": "quorum"}})
+    assert W.main(["join", "tst-p1", "--yes"]) == 0  # validate_manifest permits null families
+    assert "Families: any\n" in capsys.readouterr().out
 
 
 def test_cli_status_prints_me(api, home, capsys):

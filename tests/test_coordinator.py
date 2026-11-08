@@ -8,7 +8,8 @@ from contextlib import closing
 
 import pytest
 
-from conftest import QUOTE, TEXT, add_people, make_canaries, make_det_manifest, make_manifest, make_output, make_units, offer
+from conftest import (DROP, QUOTE, TEXT, FakeClock, add_people, make_canaries, make_det_manifest, make_manifest,
+                      make_output, make_units, offer)
 from rally.checks import ManifestError
 from rally.server import ApiError, Coordinator, load_project_dir, main
 
@@ -112,9 +113,11 @@ def test_slot_rule_fills_replicas_then_returns_none(coord):
 
 def test_lease_once_never_gives_a_participant_the_same_wu_twice(coord):
     people, pins = setup(coord, units=2)
-    a, b = lease(coord, people, "tst-w1", pins), lease(coord, people, "tst-w1", pins)
-    assert a["wu"]["id"] != b["wu"]["id"]
+    a = lease(coord, people, "tst-w1", pins)
     coord.release(people["tst-w1"]["id"], a["lease_id"], "error")
+    b = lease(coord, people, "tst-w1", pins)
+    assert a["wu"]["id"] != b["wu"]["id"]
+    coord.release(people["tst-w1"]["id"], b["lease_id"], "error")
     assert lease(coord, people, "tst-w1", pins) is None
     assert lease(coord, people, "tst-w2", pins)["wu"]["id"] in {a["wu"]["id"], b["wu"]["id"]}
 
@@ -196,7 +199,7 @@ def test_lease_prefers_projects_in_request_order(coord):
     ha, hb = (coord.project(p)["manifest_hash"] for p in ("tst-proj-a", "tst-proj-b"))
     assert lease(coord, people, "tst-w2", {"tst-proj-a": ha, "tst-proj-b": hb})["wu"]["project"] == "tst-proj-a"
     assert lease(coord, people, "tst-w1", {"tst-proj-b": hb, "tst-proj-a": ha})["wu"]["project"] == "tst-proj-b"
-    got = lease(coord, people, "tst-w2", {"tst-proj-a": ha, "tst-proj-b": hb})
+    got = lease(coord, people, "tst-w3", {"tst-proj-a": ha, "tst-proj-b": hb})
     assert (got["wu"]["project"], got["wu"]["manifest_hash"]) == ("tst-proj-a", ha)
 
 
@@ -207,12 +210,29 @@ def test_lease_order_priority_then_open_quorums(coord):
              {"id": "tst-mid", "payload": {"text": TEXT}}]
     coord.add_project(make_manifest(), units, [])
     pins = {"tst-quorum": coord.project("tst-quorum")["manifest_hash"]}
+    w1 = people["tst-w1"]["id"]
     first = lease(coord, people, "tst-w1", pins)
     assert "Top sample" in first["wu"]["prompt"]
-    voted = max(lease(coord, people, "tst-w1", pins), lease(coord, people, "tst-w1", pins), key=lambda g: g["wu"]["id"])
-    submit(coord, people, "tst-w1", voted)  # the WU with the higher id: without the vote it sorts last
-    assert lease(coord, people, "tst-w2", pins)["wu"]["id"] == first["wu"]["id"]  # priority beats an open quorum
+    coord.release(w1, first["lease_id"], "error")
+    low = lease(coord, people, "tst-w1", pins)  # ties go by unit file order
+    coord.release(w1, low["lease_id"], "error")
+    voted = lease(coord, people, "tst-w1", pins)  # tst-mid: without the vote it sorts last
+    assert len({first["wu"]["id"], low["wu"]["id"], voted["wu"]["id"]}) == 3
+    submit(coord, people, "tst-w1", voted)
+    top = lease(coord, people, "tst-w2", pins)
+    assert top["wu"]["id"] == first["wu"]["id"]  # priority beats an open quorum
+    submit(coord, people, "tst-w2", top)
     assert lease(coord, people, "tst-w2", pins)["wu"]["id"] == voted["wu"]["id"]  # then WUs that have a vote
+
+
+def test_ties_are_leased_in_unit_file_order(coord):
+    people, pins = setup(coord, make_det_manifest(), units=8)
+    leased = []
+    while got := lease(coord, people, "tst-w1", pins):  # the random WU id never sets the order
+        submit(coord, people, "tst-w1", got)
+        leased.append(got["wu"]["id"])
+    refs = {r["wu"]: r["ref"] for r in coord.export(people["tst-owner"]["id"], "tst-det")}
+    assert [refs[i] for i in leased] == [u["id"] for u in make_units(8)]
 
 
 def test_many_wus_with_a_family_vote_do_not_starve_that_family(coord):
@@ -267,6 +287,16 @@ def test_late_submit_on_an_expired_lease_takes_a_free_quorum_slot(coord, clock):
     assert submit(coord, people, "tst-w1", a) == PENDING
 
 
+def test_a_lease_past_expires_at_never_holds_a_slot_against_a_late_submit(coord, clock):
+    people, pins = setup(coord, make_det_manifest(), units=1)
+    a = lease(coord, people, "tst-w1", pins)
+    clock.advance(TTL + 1)
+    b = lease(coord, people, "tst-w2", pins)  # this marks a expired
+    clock.advance(TTL + 1)  # b is past expires_at, still marked active: no lease call ran
+    assert submit(coord, people, "tst-w1", a) == (200, {"status": "accepted", "points": PTS})
+    assert api_error(submit, coord, people, "tst-w2", b) == (409, "lease_expired")
+
+
 def test_late_submit_is_409_when_the_slot_was_taken(coord, clock):
     people, pins = setup(coord, make_det_manifest(), units=1)
     a = lease(coord, people, "tst-w1", pins)
@@ -274,6 +304,34 @@ def test_late_submit_is_409_when_the_slot_was_taken(coord, clock):
     b = lease(coord, people, "tst-w2", pins)
     assert api_error(submit, coord, people, "tst-w1", a) == (409, "lease_expired")
     assert submit(coord, people, "tst-w2", b) == (200, {"status": "accepted", "points": PTS})
+
+
+def test_a_lease_at_expires_at_still_holds_its_slot_against_a_late_submit(coord, clock):
+    people, pins = setup(coord, units=1)
+    a, b = lease(coord, people, "tst-w1", pins), lease(coord, people, "tst-w2", pins)
+    assert submit(coord, people, "tst-w2", b) == PENDING
+    clock.advance(TTL + 1)
+    c = lease(coord, people, "tst-w3", pins)  # takes a's slot
+    clock.advance(c["expires_at"] - clock.now())  # c's lease is live up to and at expires_at
+    assert api_error(submit, coord, people, "tst-w1", a) == (409, "lease_expired")
+    assert submit(coord, people, "tst-w3", c) == (200, {"status": "accepted", "points": PTS})
+
+
+def test_a_closed_wu_never_locks_its_leaseholder_out_of_the_project(coord):
+    people, pins = setup(coord, make_manifest(verify__max_attempts=1), units=2)
+    live = lease(coord, people, "tst-w1", pins)
+    bad = lease(coord, people, "tst-w2", pins)
+    assert bad["wu"]["id"] == live["wu"]["id"]
+    assert submit(coord, people, "tst-w2", bad, make_output(quotes=["x"]))[0] == 422
+    assert api_error(submit, coord, people, "tst-w1", live) == (409, "wu_closed")
+    nxt = lease(coord, people, "tst-w1", pins)  # the closed WU's lease is still active
+    assert nxt is not None and nxt["wu"]["id"] != live["wu"]["id"]
+
+
+def test_a_participant_may_hold_two_leases_in_one_project(coord):
+    people, pins = setup(coord, units=2)
+    a, b = lease(coord, people, "tst-w1", pins), lease(coord, people, "tst-w1", pins)
+    assert a is not None and b is not None and a["wu"]["id"] != b["wu"]["id"]
 
 
 def test_late_submit_of_a_same_family_vote_is_refused(coord, clock):
@@ -284,6 +342,15 @@ def test_late_submit_of_a_same_family_vote_is_refused(coord, clock):
     assert b["wu"]["id"] == a["wu"]["id"]
     assert api_error(submit, coord, people, "tst-w1", a) == (409, "lease_expired")  # a slot is free, the family is not
     assert submit(coord, people, "tst-w2", b) == PENDING
+
+
+def test_late_same_family_vote_goes_on_when_distinct_families_is_off(coord, clock):
+    people, pins = setup(coord, make_manifest(verify__quorum__distinct_families=False), units=1)
+    a = lease(coord, people, "tst-w1", pins)
+    b = lease(coord, people, "tst-w2", pins, family="anthropic")
+    assert submit(coord, people, "tst-w2", b) == PENDING
+    clock.advance(TTL + 1)
+    assert submit(coord, people, "tst-w1", a) == (200, {"status": "accepted", "points": PTS})
 
 
 def test_release_frees_the_slot_at_once(coord):
@@ -379,6 +446,19 @@ def test_bad_outputs_get_422_with_their_reason(coord, checks, bad, reason, good)
     assert submit(coord, people, "tst-w1", a, bad) == (422, {"status": "rejected", "reason": reason, "points": 0})
     b = lease(coord, people, "tst-w2", pins)
     assert submit(coord, people, "tst-w2", b, good) == (200, {"status": "accepted", "points": PTS})
+
+
+def test_output_of_exactly_max_output_is_not_too_large(coord):
+    from rally.server import MAX_OUTPUT
+    people, pins = setup(coord, units=1)
+    out = make_output()
+    out["pad"] = ""
+    out["pad"] = "x" * (MAX_OUTPUT - len(json.dumps(out)))
+    assert len(json.dumps(out)) == MAX_OUTPUT
+    assert submit(coord, people, "tst-w1", lease(coord, people, "tst-w1", pins), out) == PENDING
+    out["pad"] += "x"
+    got = lease(coord, people, "tst-w2", pins)
+    assert submit(coord, people, "tst-w2", got, out)[1]["reason"] == "size"
 
 
 def test_wu_fails_after_three_rejected_attempts(coord):
@@ -518,14 +598,21 @@ def shape(x):
     return type(x).__name__
 
 
+def numbered_canaries(n):
+    """Canaries that carry SECRET_TEXT and differ by their text, so a test can tell one canary from another."""
+    return [{"payload": {"text": f"{SECRET_TEXT} Sample {i}."}, "answer": {"kind": "alpha", "value": 1.5}}
+            for i in range(n)]
+
+
 def test_canary_is_chosen_only_when_want_canary_says_so(db_path, clock):
-    coord, people, pins, calls = canary_coord(db_path, clock, chosen={"tst-w2"})
+    coord, people, pins, calls = canary_coord(db_path, clock, chosen={"tst-w2"}, canaries=numbered_canaries(3))
     a = lease(coord, people, "tst-w1", pins)
     assert SECRET_TEXT not in a["wu"]["prompt"] and calls == [("tst-w1", "tst-quorum", 0.25)]
     b = lease(coord, people, "tst-w2", pins)
     assert SECRET_TEXT in b["wu"]["prompt"]
+    submit(coord, people, "tst-w2", b)
     b2 = lease(coord, people, "tst-w2", pins)  # the next canary: never the same one twice
-    assert SECRET_TEXT in b2["wu"]["prompt"] and b2["wu"]["id"] != b["wu"]["id"]
+    assert SECRET_TEXT in b2["wu"]["prompt"] and b2["wu"]["prompt"] != b["wu"]["prompt"]
     coord.add_project(make_det_manifest(), make_units(1), [])
     lease(coord, people, "tst-w3", {"tst-det": coord.project("tst-det")["manifest_hash"]})
     assert len(calls) == 3  # a project with rate 0 never asks
@@ -572,24 +659,28 @@ def test_a_422_on_a_canary_counts_as_a_canary_failure(db_path, clock):
 
 
 def test_same_family_workers_get_the_same_canary_and_may_submit_late(db_path, clock):
-    coord, people, pins, _ = canary_coord(db_path, clock, chosen={"tst-w1", "tst-w2", "tst-w3"})
+    # three units, so each canary stands in for its own unit W: a late canary goes on while W has a free slot
+    # and no family clash, as a late real vote on W would
+    coord, people, pins, _ = canary_coord(db_path, clock, chosen={"tst-w1", "tst-w2", "tst-w3"}, units=3,
+                                          canaries=numbered_canaries(3))
     got = [lease(coord, people, w, pins, family="anthropic") for w in ("tst-w1", "tst-w2", "tst-w3")]
-    assert len({g["wu"]["id"] for g in got}) == 1 and SECRET_TEXT in got[0]["wu"]["prompt"]  # no slot, no family rule
+    assert len({g["wu"]["prompt"] for g in got}) == 1 and SECRET_TEXT in got[0]["wu"]["prompt"]  # the oldest canary
     clock.advance(TTL + 1)
     assert [submit(coord, people, w, g) for w, g in zip(("tst-w1", "tst-w2", "tst-w3"), got)] == [PENDING] * 3
 
 
 def test_canary_failures_quarantine_and_free_the_slots(db_path, clock):
     chosen = set()
-    coord, people, pins, _ = canary_coord(db_path, clock, chosen, units=3)
+    coord, people, pins, _ = canary_coord(db_path, clock, chosen, units=2)
+    coord.add_project(make_det_manifest(), make_units(1), [])
+    det = {"tst-det": coord.project("tst-det")["manifest_hash"]}
     w1 = people["tst-w1"]["id"]
     x = lease(coord, people, "tst-w1", pins)
     assert submit(coord, people, "tst-w1", x) == PENDING
-    y = lease(coord, people, "tst-w1", pins)
-    x2, y2 = lease(coord, people, "tst-w2", pins), lease(coord, people, "tst-w3", pins)
-    assert (x2["wu"]["id"], y2["wu"]["id"]) == (x["wu"]["id"], y["wu"]["id"])
-    z = lease(coord, people, "tst-w4", pins)  # x and y are full; z is the real work left for w1's canaries
-    assert z["wu"]["id"] not in {x["wu"]["id"], y["wu"]["id"]}
+    y = lease(coord, people, "tst-w1", det)  # w1's live lease sits in the other project
+    x2 = lease(coord, people, "tst-w2", pins)
+    assert x2["wu"]["id"] == x["wu"]["id"]  # x is full; the other unit is the real work left for w1's canaries
+    assert lease(coord, people, "tst-w3", det) is None  # y is full
     chosen.add("tst-w1")
     for _ in range(2):
         k = lease(coord, people, "tst-w1", pins)
@@ -601,17 +692,17 @@ def test_canary_failures_quarantine_and_free_the_slots(db_path, clock):
     assert api_error(coord.submit, w1, y["lease_id"], make_output()) == (403, "not_active")
     assert api_error(coord.heartbeat, w1, y["lease_id"]) == (403, "not_active")
     assert api_error(coord.release, w1, y["lease_id"], "stop") == (403, "not_active")
-    freed = {g["wu"]["id"]: g for g in (lease(coord, people, "tst-w4", pins), lease(coord, people, "tst-w4", pins))}
-    assert set(freed) == {x["wu"]["id"], y["wu"]["id"]}
-    assert {r["status"] for r in export_rows(coord, people, "tst-quorum").values()} == {"open"}  # none finished yet
+    x4, y3 = lease(coord, people, "tst-w4", pins), lease(coord, people, "tst-w3", det)
+    assert (x4["wu"]["id"], y3["wu"]["id"]) == (x["wu"]["id"], y["wu"]["id"])  # the vote and the lease are freed
+    for pid in ("tst-quorum", "tst-det"):
+        assert {r["status"] for r in export_rows(coord, people, pid).values()} == {"open"}  # none finished yet
     submit(coord, people, "tst-w2", x2)
-    assert submit(coord, people, "tst-w4", freed[x["wu"]["id"]]) == (200, {"status": "accepted", "points": PTS})
+    assert submit(coord, people, "tst-w4", x4) == (200, {"status": "accepted", "points": PTS})
     rows = export_rows(coord, people, "tst-quorum")
     assert [(s["participant"], s["status"], s["reason"]) for s in rows[x["wu"]["id"]]["submissions"]] == [
         ("tst-w1", "rejected", "quarantined"), ("tst-w2", "accepted", None), ("tst-w4", "accepted", None)]
-    submit(coord, people, "tst-w3", y2)
-    submit(coord, people, "tst-w4", freed[y["wu"]["id"]])
-    assert export_rows(coord, people, "tst-quorum")[y["wu"]["id"]]["releases"] == {"quarantined": 1}
+    submit(coord, people, "tst-w3", y3)
+    assert export_rows(coord, people, "tst-det")[y["wu"]["id"]]["releases"] == {"quarantined": 1}
 
 
 def test_points_equal_accepted_submissions_times_stage_points(db_path, clock):
@@ -691,16 +782,81 @@ def test_no_canary_without_real_work_for_this_participant(db_path, clock):
     assert coord.lease(people["tst-w1"]["id"], pins, [offer("anthropic")], max_ttl_s=timeout - 1) is None  # no offer fits
     k = lease(coord, people, "tst-w1", pins)
     assert SECRET_TEXT in k["wu"]["prompt"]  # in place of the one unit
+    submit(coord, people, "tst-w1", k)  # the canary lease held the unit; its submit frees the unit for w3
     submit(coord, people, "tst-w3", lease(coord, people, "tst-w3", pins))  # the unit is done
     assert coord.projects()[0]["progress"] == {"done": 1}
     assert lease(coord, people, "tst-w2", pins) is None  # a lease now would prove a canary
     assert [c[0] for c in calls] == ["tst-w1", "tst-w3"]  # asked only when real work was found
 
 
-def test_canary_falls_back_to_real_work_when_every_canary_was_leased(db_path, clock):
-    coord, people, pins, _ = canary_coord(db_path, clock, chosen={"tst-w1"})
-    assert all(SECRET_TEXT in lease(coord, people, "tst-w1", pins)["wu"]["prompt"] for _ in range(3))
-    assert SECRET_TEXT not in lease(coord, people, "tst-w1", pins)["wu"]["prompt"]
+def test_canaries_come_in_file_order_then_real_work(db_path, clock):
+    texts = [f"Hidden sample {i} shows alpha at 1.5 units." for i in range(6)]
+    canaries = [{"payload": {"text": t}, "answer": {"kind": "alpha", "value": 1.5}} for t in texts]
+    coord, people, pins, _ = canary_coord(db_path, clock, chosen={"tst-w1"}, canaries=canaries)
+    for t in texts:  # the oldest canary first; ties go by file order, never by the random WU id
+        k = lease(coord, people, "tst-w1", pins)
+        assert t in k["wu"]["prompt"]
+        submit(coord, people, "tst-w1", k)
+    assert TEXT in lease(coord, people, "tst-w1", pins)["wu"]["prompt"]  # every canary was leased
+
+
+def next_lease_after(tmp_path, chosen, units, then):
+    """tst-w1 leases, holds, releases or lets the lease expire, then leases real work: (masked lease, ref) or None."""
+    clock, want = FakeClock(), {"tst-w1"} if chosen else set()
+    m = make_det_manifest(canary={"rate": 0.5, "quarantine_after": 2})
+    coord, people, pins, _ = canary_coord(tmp_path / f"{chosen}.db", clock, want, manifest=m, units=units)
+    first = lease(coord, people, "tst-w1", pins)
+    assert (SECRET_TEXT in first["wu"]["prompt"]) == chosen
+    if then == "release":
+        coord.release(people["tst-w1"]["id"], first["lease_id"], "error")
+    elif then == "expire":
+        clock.advance(TTL + 1)
+    want.clear()  # a second canary would hide which unit is left
+    nxt = lease(coord, people, "tst-w1", pins)
+    return nxt and (masked(nxt), export_rows(coord, people, "tst-det")[nxt["wu"]["id"]]["ref"])
+
+
+@pytest.mark.parametrize("then", ["hold", "release", "expire"])
+@pytest.mark.parametrize("units", [1, 2])
+def test_after_a_canary_lease_the_next_lease_is_the_same_as_after_a_real_one(tmp_path, units, then):
+    canary, real = (next_lease_after(tmp_path, chosen, units, then) for chosen in (True, False))
+    assert canary == real and (real is None) == (units == 1)  # None only when the last real unit was taken
+
+
+def test_after_a_canary_submit_the_replaced_wu_comes_back(db_path, clock):
+    chosen = {"tst-w1"}
+    coord, people, pins, _ = canary_coord(db_path, clock, chosen, units=1,
+                                          manifest=make_det_manifest(canary={"rate": 0.5, "quarantine_after": 2}))
+    k = lease(coord, people, "tst-w1", pins)
+    assert SECRET_TEXT in k["wu"]["prompt"]
+    chosen.clear()
+    assert lease(coord, people, "tst-w1", pins) is None  # the canary stands in for the one real unit
+    submit(coord, people, "tst-w1", k)
+    got = lease(coord, people, "tst-w1", pins)
+    assert got is not None and SECRET_TEXT not in got["wu"]["prompt"]
+
+
+def test_canary_comes_only_from_a_joined_project(db_path, clock):
+    coord, people, _, _ = canary_coord(db_path, clock, chosen={"tst-w1"}, units=1)
+    clock.advance(10)
+    other_text = "The other hidden sample shows alpha at 1.5 units."
+    coord.add_project(make_manifest(id="tst-other", canary={"rate": 0.25, "quarantine_after": 2}), make_units(1),
+                      make_canaries(3, text=other_text))
+    pins = {"tst-other": coord.project("tst-other")["manifest_hash"]}
+    for _ in range(3):  # the older canaries of tst-quorum sort first, but w1 never joined tst-quorum
+        k = lease(coord, people, "tst-w1", pins)
+        assert other_text in k["wu"]["prompt"] and (k["wu"]["project"], k["wu"]["manifest_hash"]) == (
+            "tst-other", pins["tst-other"])
+        submit(coord, people, "tst-w1", k)
+
+
+def test_canary_lease_names_the_offer_that_fits(db_path, clock):
+    m = make_det_manifest(stages__brain__needs={"families": ["openai"]}, canary={"rate": 0.25, "quarantine_after": 2})
+    coord, people, pins, _ = canary_coord(db_path, clock, chosen={"tst-w1"}, manifest=m)
+    offers = [offer("anthropic", adapter="unfit"), offer("openai", adapter="fit")]
+    k, n = (coord.lease(people[w]["id"], pins, offers) for w in ("tst-w1", "tst-w2"))
+    assert SECRET_TEXT in k["wu"]["prompt"] and SECRET_TEXT not in n["wu"]["prompt"]
+    assert k["adapter"] == n["adapter"] == "fit"
 
 
 def test_quorum_canary_is_graded_on_the_quorum_fields_only(db_path, clock):
@@ -712,6 +868,102 @@ def test_quorum_canary_is_graded_on_the_quorum_fields_only(db_path, clock):
     assert canary_counts(db_path) == {"tst-w1": (1, 0), "tst-w2": (0, 1)}
 
 
+CANARY_ON = {"rate": 0.5, "quarantine_after": 2}
+
+
+def first_lease(tmp_path, canary, kind, units=1, voters=(), clock=None, **kw):
+    """The voters lease and submit, then tst-w1 leases (a canary when canary is True); later leases are real."""
+    chosen = set()
+    m = (make_det_manifest if kind == "det" else make_manifest)(canary=CANARY_ON, **kw)
+    coord, people, pins, _ = canary_coord(tmp_path / f"{kind}-{canary}.db", clock or FakeClock(), chosen, manifest=m,
+                                          units=units)
+    for w in voters:
+        assert submit(coord, people, w, lease(coord, people, w, pins))[0] == 200
+    if canary:
+        chosen.add("tst-w1")
+    a = lease(coord, people, "tst-w1", pins)
+    assert (SECRET_TEXT in a["wu"]["prompt"]) == canary
+    chosen.clear()
+    return coord, people, pins, a
+
+
+@pytest.mark.parametrize("kind,others", [
+    ("det", [("tst-w2", "openai")]), ("det", [("tst-w2", "anthropic")]), ("quorum", [("tst-w2", "anthropic")]),
+    ("quorum", [("tst-w2", "openai"), ("tst-w3", "google")])])
+def test_a_canary_holds_the_slot_and_family_of_the_unit_it_replaced(tmp_path, kind, others):
+    seen = {}
+    for canary in (True, False):
+        coord, people, pins, _ = first_lease(tmp_path, canary, kind)
+        seen[canary] = [(g := lease(coord, people, w, pins, family=f)) and masked(g) for w, f in others]
+    assert seen[True] == seen[False]
+
+
+@pytest.mark.parametrize("kind,voters", [("det", ()), ("quorum", ("tst-w2",))])
+def test_progress_under_honest_traffic_is_the_same_while_a_canary_is_held(tmp_path, kind, voters):
+    seen = {}
+    for canary in (True, False):
+        coord, people, pins, _ = first_lease(tmp_path, canary, kind, voters=voters)
+        before = coord.projects()[0]["progress"]
+        if honest := lease(coord, people, "tst-w3", pins):
+            submit(coord, people, "tst-w3", honest)
+        seen[canary] = before, coord.projects()[0]["progress"]
+    assert seen[True] == seen[False]
+
+
+@pytest.mark.parametrize("kind", ["det", "quorum"])
+def test_two_accounts_comparing_wu_ids_learn_nothing(tmp_path, kind):
+    seen = {}
+    for canary in (True, False):
+        coord, people, pins, a = first_lease(tmp_path, canary, kind, units=4)
+        seen[canary] = a["wu"]["id"] == lease(coord, people, "tst-w2", pins)["wu"]["id"]
+    assert seen[True] == seen[False]
+
+
+def test_two_canaries_at_once_show_two_ids_as_two_real_leases_do(tmp_path):
+    seen = {}
+    for canary in (True, False):
+        coord, people, pins, _ = canary_coord(tmp_path / f"{canary}.db", FakeClock(),
+                                              {"tst-w1", "tst-w2"} if canary else set(),
+                                              manifest=make_det_manifest(canary=CANARY_ON), units=4)
+        a, b = lease(coord, people, "tst-w1", pins), lease(coord, people, "tst-w2", pins)
+        assert (SECRET_TEXT in a["wu"]["prompt"]) == (SECRET_TEXT in b["wu"]["prompt"]) == canary
+        seen[canary] = a["wu"]["id"] == b["wu"]["id"]
+    assert seen[True] == seen[False]
+
+
+@pytest.mark.parametrize("kind,then,other,want", [
+    ("quorum", "fail", "openai", (409, "wu_closed")),  # W fails while tst-w1's lease is live
+    ("det", "done", "openai", (409, "lease_expired")),
+    ("det", "hold", "openai", (409, "lease_expired")),  # no free slot
+    ("quorum", "hold", "anthropic", (409, "lease_expired"))])  # a free slot, but the family clashes
+def test_a_canary_submit_answers_as_a_submit_on_the_replaced_wu(tmp_path, kind, then, other, want):
+    seen = {}
+    for canary in (True, False):
+        clock = FakeClock()
+        coord, people, pins, a = first_lease(tmp_path, canary, kind, clock=clock, verify__max_attempts=1)
+        if then != "fail":
+            clock.advance(TTL + 1)
+        b = lease(coord, people, "tst-w2", pins, family=other)  # the replaced WU W, or a's own WU
+        if then != "hold":
+            assert submit(coord, people, "tst-w2", b, make_output(kind="nope") if then == "fail" else None)[0] in (200, 422)
+        seen[canary] = [api_error(submit, coord, people, "tst-w1", a)]
+        if then == "hold":  # the 409 leaves the lease as it was: once W has room again, the late submit goes on
+            coord.release(people["tst-w2"]["id"], b["lease_id"], "error")
+            seen[canary].append(submit(coord, people, "tst-w1", a))
+    assert seen[True] == seen[False] and seen[True][0] == want, seen
+
+
+def test_lease_queries_use_their_indexes(coord, db_path):
+    from rally.server import CANARY_PICK, CANDIDATES
+    sql = CANDIDATES.format(ids=":p0", order="WHEN :p0 THEN 0")
+    with closing(sqlite3.connect(db_path)) as db:
+        plan = " ".join(r[3] for r in db.execute("EXPLAIN QUERY PLAN " + CANARY_PICK, ("tst-p", 1)))
+        outer = [r[3] for r in db.execute("EXPLAIN QUERY PLAN " + sql, {"me": 1, "skip": "", "p0": "tst-p"})]
+        partial = {r[1]: r[4] for r in db.execute("PRAGMA index_list(work_units)")}
+    assert "INDEX wu_canary" in plan and partial["wu_canary"] == 1, (plan, partial)  # it holds canaries only
+    assert any(r.startswith("SEARCH w USING INDEX wu_pick (status=?") for r in outer), outer  # not every unit
+
+
 def test_quorum_waits_for_all_replicas(coord):
     people, pins = setup(coord, make_manifest(verify__quorum__replicas=3))
     got = {w: lease(coord, people, w, pins) for w in ("tst-w1", "tst-w2", "tst-w3")}
@@ -719,6 +971,15 @@ def test_quorum_waits_for_all_replicas(coord):
     assert submit(coord, people, "tst-w3", got["tst-w3"]) == (200, {"status": "accepted", "points": PTS})
     (row,) = export_rows(coord, people, "tst-quorum").values()
     assert (row["status"], [s["status"] for s in row["submissions"]]) == ("done", ["accepted"] * 3)
+
+
+def test_agree_counts_members_when_distinct_families_is_false(coord):
+    people, pins = setup(coord, make_manifest(verify__quorum__distinct_families=False))
+    a, b = lease(coord, people, "tst-w1", pins), lease(coord, people, "tst-w2", pins)
+    assert submit(coord, people, "tst-w1", a) == PENDING
+    assert submit(coord, people, "tst-w2", b, make_output(value=9.0)) == PENDING
+    (row,) = export_rows(coord, people, "tst-quorum").values()
+    assert row["status"] == "open"  # two single votes: no group reached agree = 2
 
 
 def test_a_failed_wu_rejects_its_votes_and_refuses_live_and_late_submits(coord, clock):
@@ -735,11 +996,60 @@ def test_a_failed_wu_rejects_its_votes_and_refuses_live_and_late_submits(coord, 
         ("tst-w1", "rejected", "failed", 0), ("tst-w3", "rejected", "check:quote_span:quotes", 0)]
 
 
-def test_a_version_bump_never_lets_a_live_lease_pay_twice(coord):
+def test_a_version_bump_may_not_change_the_verify_mode(coord):
+    people, pins = setup(coord)
+    a = lease(coord, people, "tst-w1", pins)
+    assert submit(coord, people, "tst-w1", a) == PENDING
+    with pytest.raises(ManifestError, match="^verify.mode:"):
+        coord.add_project(make_det_manifest(id="tst-quorum", version=2), [], [])
+    view = coord.project("tst-quorum")
+    assert (view["version"], view["manifest_hash"], view["verify"]["mode"]) == (1, pins["tst-quorum"], "quorum")
+    b = lease(coord, people, "tst-w2", pins)  # the old pin still works: nothing changed
+    assert submit(coord, people, "tst-w2", b) == (200, {"status": "accepted", "points": PTS})
+
+
+def test_a_version_bump_may_not_change_the_quorum_rule(coord):
+    _, pins = setup(coord)
+    with pytest.raises(ManifestError, match="^verify.quorum:"):
+        coord.add_project(make_manifest(version=2, verify__quorum__fields=["kind"]), [], [])
+    view = coord.project("tst-quorum")
+    assert (view["version"], view["manifest_hash"], view["verify"]["quorum"]["fields"]) == (
+        1, pins["tst-quorum"], ["kind", "value"])
+    # max_replicas left out fills in its default 3, the same value as before
+    coord.add_project(make_manifest(version=2, stages__brain__prompt="New words.\n${text}",
+                                    verify__quorum__max_replicas=DROP), [], [])
+    view = coord.project("tst-quorum")
+    assert (view["version"], view["stages"]["brain"]["prompt"]) == (2, "New words.\n${text}")
+
+
+def test_a_bump_that_turns_canaries_on_needs_stored_canaries(coord):
+    setup(coord, make_det_manifest())
+    with pytest.raises(ManifestError, match="^canaries:"):  # a bump stores no canaries, so these would be lost
+        coord.add_project(make_det_manifest(version=2, canary=CANARY_ON), [], make_canaries(2))
+    assert coord.project("tst-det")["version"] == 1
+
+
+def test_a_bump_keeps_the_stored_canaries(db_path, clock):
+    coord, people, _, _ = canary_coord(db_path, clock, {"tst-w1"}, manifest=make_det_manifest(canary=CANARY_ON))
+    coord.add_project(make_det_manifest(version=2, canary=CANARY_ON), [], [])
+    pins = {"tst-det": coord.project("tst-det")["manifest_hash"]}
+    assert SECRET_TEXT in lease(coord, people, "tst-w1", pins)["wu"]["prompt"]
+
+
+def test_export_reads_one_snapshot(coord, db_path, clock):
     people, pins = setup(coord)
     a, b = lease(coord, people, "tst-w1", pins), lease(coord, people, "tst-w2", pins)
-    coord.add_project(make_det_manifest(id="tst-quorum", version=2), [], [])
-    assert submit(coord, people, "tst-w1", a) == (200, {"status": "accepted", "points": PTS})
-    assert api_error(coord.submit, people["tst-w2"]["id"], b["lease_id"], make_output(value=9)) == (409, "wu_closed")
-    (row,) = export_rows(coord, people, "tst-quorum").values()
-    assert (row["result"]["value"], coord.me(people["tst-w2"]["id"])["points"]) == (1.5, 0)
+    assert submit(coord, people, "tst-w1", a) == PENDING
+    writer, read, wrote = Coordinator(db_path, now=clock.now), coord._read, []
+
+    def read_then_write(sql, args=()):
+        rows = read(sql, args)
+        if sql.startswith("SELECT * FROM work_units") and not wrote:  # its own connection: a real second writer
+            wrote.append(writer.submit(people["tst-w2"]["id"], b["lease_id"], make_output()))
+        return rows
+
+    coord._read = read_then_write
+    (row,) = coord.export(people["tst-owner"]["id"], "tst-quorum")
+    assert wrote == [(200, {"status": "accepted", "points": PTS})]
+    assert (row["status"], [(s["participant"], s["status"]) for s in row["submissions"]]) == (
+        "open", [("tst-w1", "pending")])
