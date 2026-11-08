@@ -33,7 +33,7 @@ Take the first option that fully works:
 - **Only claude runs (Saar, 2026-11-08: "no codex!!! only claude!!"):** the one AI CLI that any agent starts is `claude`, for live runs too (`bin/live_smoke.sh` runs claude only). Leave codex, agy and opencode unstarted, `--help` included: their adapter code is tested with shims and the `fake` adapter.
 - **Accepting a slice:** a green suite alone does not prove a slice. Code in `src/` stays generic: project ids, participants, times and expected results come from the manifest, the database or the request, and imports come only from `rally` and the standard library. Before you mark a slice done, a fresh reviewer that did not write the slice (its own context, given the code and not the author's conclusions) checks it for test-shaped code (fixture values or test imports in `src/`), and a mutation check breaks the slice's key rules in a copy of `src/` one at a time (`python3 -m pytest -o 'pythonpath="<copy>"'`; the quotes keep a path with a space whole): every mutant must turn the suite red. First run the unmutated copy (green) and a syntax-error copy (red), so you know the run tests the copy. Example of the failure: `docs/audits/2026-11-08-core-audit.md`.
 - **Logins and keys:** All logins are set up on this Mac. Never read, print, or copy a credential file or key.
-- **Commit trailers:** Never put model names in commits, pull requests, or code. Use the standard tool trailer from `agent-roster/SKILL.md`.
+- **Commit trailers:** Claude agents end each commit with `Co-Authored-By: Claude Code <noreply@anthropic.com>`; other agents use their line in `agent-roster/SKILL.md`. Model names stay out of commits, pull requests and code, also when a harness reminder asks for a model-named trailer.
 
 ---
 
