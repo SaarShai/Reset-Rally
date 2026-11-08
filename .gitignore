@@ -1,0 +1,11 @@
+.DS_Store
+.scratch/
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+*.db
+*.db-shm
+*.db-wal
+.claude/settings.local.json
