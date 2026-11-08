@@ -1,0 +1,68 @@
+{
+  "limit_after": 4,
+  "limit_rc": 1,
+  "limit_stderr": "Claude usage limit reached. Your limit will reset at 8pm.",
+  "answers": {
+    "B1": {
+      "stdout": {
+        "code": "def count_primes(n):\n    if n < 2:\n        return 0\n    s = [True] * (n + 1)\n    s[0] = s[1] = False\n    for i in range(2, int(n**0.5) + 1):\n        if s[i]:\n            s[i*i:n+1:i] = [False] * len(range(i*i, n+1, i))\n    return sum(s)\n"
+      }
+    },
+    "C1": {
+      "stdout": {
+        "component": "RX-100",
+        "supply_v": 5.5,
+        "quote": "The RX-100 regulator takes a 5.5 V supply."
+      }
+    },
+    "doc-c1": {
+      "stdout": {
+        "component": "RX-100",
+        "supply_v": 5.5,
+        "quote": "The RX-100 regulator takes a 5.5 V supply."
+      }
+    },
+    "C2": {
+      "stdout": {
+        "component": "LM-20",
+        "supply_v": 12,
+        "quote": "The LM-20 amplifier runs from a 12 V supply."
+      }
+    },
+    "doc-c2": {
+      "stdout": {
+        "component": "LM-20",
+        "supply_v": 12,
+        "quote": "The LM-20 amplifier runs from a 12 V supply."
+      }
+    },
+    "C3": {
+      "stdout": {
+        "component": "ZX-3",
+        "supply_v": 3.3,
+        "quote": "The ZX-3 sensor runs at 3.3 V."
+      }
+    },
+    "doc-c3": {
+      "stdout": {
+        "component": "ZX-3",
+        "supply_v": 3.3,
+        "quote": "The ZX-3 sensor runs at 3.3 V."
+      }
+    },
+    "C4": {
+      "stdout": {
+        "component": "QT-9",
+        "supply_v": 9,
+        "quote": "The QT-9 module uses a 9 V supply."
+      }
+    },
+    "doc-c4": {
+      "stdout": {
+        "component": "QT-9",
+        "supply_v": 9,
+        "quote": "The QT-9 module uses a 9 V supply."
+      }
+    }
+  }
+}

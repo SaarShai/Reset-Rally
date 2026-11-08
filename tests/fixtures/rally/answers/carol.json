@@ -1,0 +1,66 @@
+{
+  "answers": {
+    "K2": {
+      "stdout": {
+        "component": "PB-2",
+        "supply_v": 24,
+        "quote": "The PB-2 probe needs a 24 V supply."
+      }
+    },
+    "doc-k2": {
+      "stdout": {
+        "component": "PB-2",
+        "supply_v": 24,
+        "quote": "The PB-2 probe needs a 24 V supply."
+      }
+    },
+    "C3": {
+      "stdout": {
+        "component": "ZX-3",
+        "supply_v": 3.3,
+        "quote": "The ZX-3 sensor runs at 3.3 V."
+      }
+    },
+    "doc-c3": {
+      "stdout": {
+        "component": "ZX-3",
+        "supply_v": 3.3,
+        "quote": "The ZX-3 sensor runs at 3.3 V."
+      }
+    },
+    "C4": {
+      "stdout": {
+        "component": "QT-9",
+        "supply_v": 9,
+        "quote": "The QT-9 module uses a 9 V supply."
+      }
+    },
+    "doc-c4": {
+      "stdout": {
+        "component": "QT-9",
+        "supply_v": 9,
+        "quote": "The QT-9 module uses a 9 V supply."
+      }
+    },
+    "A1": {
+      "stdout": {
+        "expr": "(n*(n+1)//2)**2"
+      }
+    },
+    "A2": {
+      "stdout": {
+        "expr": "n*(n+1)*(2*n+1)//6"
+      }
+    },
+    "A3": {
+      "stdout": {
+        "expr": "n**2"
+      }
+    },
+    "A4": {
+      "stdout": {
+        "dt": 2.5
+      }
+    }
+  }
+}

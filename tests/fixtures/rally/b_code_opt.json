@@ -1,0 +1,30 @@
+{
+  "id": "rally-b",
+  "version": 1,
+  "title": "Prime Counting Code Optimization",
+  "track": "relay",
+  "verification": {
+    "mode": "holdout"
+  },
+  "gate1_kind": "patch",
+  "holdout": {
+    "cases": {
+      "0": 0,
+      "1": 0,
+      "2": 1,
+      "3": 2,
+      "7919": 1000,
+      "10007": 1230
+    }
+  },
+  "units": [
+    {
+      "id": "B1",
+      "prompt": "Item: B1\nOptimize count_primes(n)"
+    },
+    {
+      "id": "B2",
+      "prompt": "Item: B2\nOptimize count_primes(n) Wave 2\nLeaderboard:\nP-alice: 142 lines, holdout: pass\nP-bob-1: 142 lines, holdout: fail"
+    }
+  ]
+}

@@ -1,0 +1,94 @@
+{
+  "id": "rally-c",
+  "version": 1,
+  "title": "Structured Corpus Synthesis",
+  "track": "brain",
+  "verification": {
+    "mode": "quorum",
+    "quorum_k": 2,
+    "fields": [
+      "component",
+      "supply_v"
+    ]
+  },
+  "gate1_kind": "quote_span",
+  "schema": {
+    "type": "object",
+    "properties": {
+      "component": {
+        "type": "string"
+      },
+      "supply_v": {
+        "type": "number"
+      },
+      "quote": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "component",
+      "supply_v",
+      "quote"
+    ]
+  },
+  "canary": {
+    "rate": 0.05,
+    "enabled": true
+  },
+  "units": [
+    {
+      "id": "C1",
+      "payload": {
+        "text": "The RX-100 regulator takes a 5.5 V supply."
+      },
+      "prompt": "Item: C1\nExtract component, supply_v, quote from:\nThe RX-100 regulator takes a 5.5 V supply."
+    },
+    {
+      "id": "C2",
+      "payload": {
+        "text": "The LM-20 amplifier runs from a 12 V supply."
+      },
+      "prompt": "Item: C2\nExtract component, supply_v, quote from:\nThe LM-20 amplifier runs from a 12 V supply."
+    },
+    {
+      "id": "C3",
+      "payload": {
+        "text": "The ZX-3 sensor runs at 3.3 V. Its I/O pins tolerate 5.0 V."
+      },
+      "prompt": "Item: C3\nExtract component, supply_v, quote from:\nThe ZX-3 sensor runs at 3.3 V. Its I/O pins tolerate 5.0 V."
+    },
+    {
+      "id": "C4",
+      "payload": {
+        "text": "The QT-9 module uses a 9 V supply."
+      },
+      "prompt": "Item: C4\nExtract component, supply_v, quote from:\nThe QT-9 module uses a 9 V supply."
+    }
+  ],
+  "canaries": [
+    {
+      "id": "K1",
+      "payload": {
+        "text": "The KC-7 board takes a 12 V adapter. Its core supply is 1.8 V."
+      },
+      "prompt": "Item: K1\nExtract component, supply_v, quote from:\nThe KC-7 board takes a 12 V adapter. Its core supply is 1.8 V.",
+      "truth": {
+        "component": "KC-7 core",
+        "supply_v": 1.8,
+        "quote": "core supply is 1.8 V."
+      }
+    },
+    {
+      "id": "K2",
+      "payload": {
+        "text": "The PB-2 probe needs a 24 V supply."
+      },
+      "prompt": "Item: K2\nExtract component, supply_v, quote from:\nThe PB-2 probe needs a 24 V supply.",
+      "truth": {
+        "component": "PB-2",
+        "supply_v": 24,
+        "quote": "The PB-2 probe needs a 24 V supply."
+      }
+    }
+  ]
+}

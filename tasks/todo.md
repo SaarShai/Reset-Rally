@@ -1,6 +1,6 @@
 # Reset Rally — Task Tracker
 
-## Active Plan
+## Completed Work
 
 - [x] **1. Repository & Workspace Setup (`/Users/za/Documents/Reset Rally`)**
   - Initialized Git repository (`main`) and created public GitHub repo [`SaarShai/Reset-Rally`](https://github.com/SaarShai/Reset-Rally).
@@ -16,13 +16,8 @@
   - Authored `GLOSSARY.md`, `ADR-0001`, and `ADR-0002`.
 - [x] **4. Test Plan & 5-Participant Mock Rally Design (`docs/specs/test-plan-and-5-participant-rally.md`)**
   - Designed unit, integration, and 5-Participant End-to-End Mock Rally tests (`Alice`, `Bob`, `Carol`, `Dave`, `Eve`) across 3 domain-agnostic projects (Math/Physics, Code Optimization, Structured Corpus Synthesis).
-  - Specified both Fast Deterministic CI Mode (`< 2 s`, `$0` tokens via `shim.py` + `FakeClock`) and Live Multi-Agent Smoke Mode (via `agent-roster/run.sh`).
-- [x] **5. Commit & Push to `SaarShai/Reset-Rally`**
-  - Verify all files, run `bin/agent_parity.py --check`, commit, and push to `origin/main`.
-
-## Next Up (Phase 1 Implementation)
-
-- [ ] **Phase 1A: `src/rally/checks.py` & `tests/unit/test_gates.py`** (pure deterministic Gate 1 checks, normalizer, safe AST expression parser, quote-span verifier).
-- [ ] **Phase 1B: `src/rally/server.py` & `tests/unit/test_leases.py`** (SQLite WAL coordinator, lease transactions, lazy expiry, quorum & canary grading).
-- [ ] **Phase 1C: `src/rally/worker.py` & `tests/unit/test_worker.py`** (CLI adapters, Pre-Reset Drain harvester, rate-limit release).
-- [ ] **Phase 1D: `tests/e2e/test_five_participant_rally.py`** (5-Participant Mock Rally harness & 12 invariants).
+- [x] **5. Core Engine & Full Test Suite Implementation (`src/rally/` & `tests/`)**
+  - **Slice 1 (`src/rally/checks.py`, `tests/fixtures/rally/`, `tests/shims/`, `tests/unit/test_manifest.py`, `tests/unit/test_gates.py`):** Implemented manifest validation, Gate 1 deterministic checks (JSON schema, safe AST expression parser, verbatim `quote_span`, Python AST patch check), Gate 2 quorum normalizer, Gate 3 Canary grading & Trust Score updates, and all 3 Rally fixtures + 5 CLI shims (`claude`, `codex`, `agy`, `opencode`, `brawn`).
+  - **Slice 2 (`src/rally/worker.py`, `tests/unit/test_worker.py`):** Implemented underlying Model Family resolution (`W-04`), CLI adapter table (`W-05`), rate-limit classification (`QuotaExhausted`, `AdapterBusy`, `AdapterError`), Pre-Reset Drain window scheduler, and zero-credential HTTP client.
+  - **Slice 3 (`src/rally/server.py`, `tests/unit/test_leases.py`, `tests/unit/test_ledger.py`, `tests/integration/`, `tests/e2e/`):** Implemented SQLite WAL Coordinator (`BEGIN IMMEDIATE` transactions, lazy lease expiry, cross-family quorum + tie-breaker slots, Brain-to-Brawn relay WUs, coordinator holdout verification, Canary quarantine & rollback, and Rally Points ledger) plus the flagship **5-Participant Mock Rally** (`E-01..E-12`) and all 12 invariants (`I-01..I-12`).
+  - **Verification:** `python3 -m pytest` -> **80 passed in 1.82s** (`< 2.0s` target).

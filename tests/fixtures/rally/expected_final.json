@@ -1,0 +1,125 @@
+{
+  "wu_states": {
+    "A1": "committed",
+    "A2": "committed",
+    "A3": "committed",
+    "A4": "committed",
+    "B1": "committed",
+    "B2": "committed",
+    "C1": "committed",
+    "C2": "committed",
+    "C3": "committed",
+    "C4": "committed",
+    "VA1": "committed",
+    "VA2": "committed",
+    "VA3": "committed",
+    "VA4a": "committed",
+    "VA4b": "committed",
+    "VB1a": "committed",
+    "VB1b": "committed",
+    "VB2": "committed"
+  },
+  "open_count": 0,
+  "leased_count": 0,
+  "failed_count": 0,
+  "committed_values": {
+    "C1": {
+      "supply_v": 5.5
+    },
+    "C2": {
+      "supply_v": 12.0
+    },
+    "C3": {
+      "supply_v": 3.3
+    },
+    "C4": {
+      "supply_v": 9.0
+    },
+    "A1": {
+      "expr": "(n*(n+1)//2)**2"
+    },
+    "A2": {
+      "expr": "n*(n+1)*(2*n+1)//6"
+    },
+    "A3": {
+      "expr": "n**2"
+    },
+    "A4": {
+      "dt": 0.1
+    },
+    "B_best": "P-bob-2"
+  },
+  "counters": {
+    "leases_expired": 1,
+    "leases_released": 1,
+    "gate1_rejects": 2,
+    "stale_submits_409": 1,
+    "quarantined_leases_403": 1,
+    "holdout_disqualifications": 1,
+    "tiebreakers_opened": 1,
+    "tiebreakers_resolved": 1,
+    "canaries_spoofed": 1,
+    "canaries_caught": 1,
+    "canaries_honest": 3,
+    "canaries_false_fails": 0
+  },
+  "participants": {
+    "alice": {
+      "trust": 0.5,
+      "status": "stopped:quota",
+      "points": 4,
+      "accepted": [
+        "B1",
+        "C1",
+        "C2",
+        "C3"
+      ]
+    },
+    "bob": {
+      "trust": 0.6,
+      "status": "active",
+      "points": 5,
+      "accepted": [
+        "C1",
+        "C2",
+        "C4",
+        "A4",
+        "B2"
+      ]
+    },
+    "carol": {
+      "trust": 0.6,
+      "status": "active",
+      "points": 5,
+      "accepted": [
+        "C3",
+        "C4",
+        "A1",
+        "A2",
+        "A3"
+      ]
+    },
+    "dave": {
+      "trust": 0.6,
+      "status": "active",
+      "points": 8,
+      "accepted": [
+        "VA1",
+        "VA2",
+        "VA3",
+        "VA4a",
+        "VA4b",
+        "VB1a",
+        "VB1b",
+        "VB2"
+      ]
+    },
+    "eve": {
+      "trust": 0.0,
+      "status": "quarantined",
+      "points": 0,
+      "accepted": []
+    }
+  },
+  "total_points": 22
+}

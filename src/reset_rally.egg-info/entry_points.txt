@@ -1,0 +1,3 @@
+[console_scripts]
+rally-server = rally.server:main
+rally-worker = rally.worker:main

@@ -1,0 +1,40 @@
+{
+  "id": "rally-a",
+  "version": 1,
+  "title": "Math and Physics Verification",
+  "track": "relay",
+  "verification": {
+    "mode": "deterministic"
+  },
+  "gate1_kind": "expr",
+  "units": [
+    {
+      "id": "A1",
+      "prompt": "Item: A1\nFind closed form for sum of k^3, k=1..n"
+    },
+    {
+      "id": "A2",
+      "prompt": "Item: A2\nFind closed form for sum of k^2, k=1..n"
+    },
+    {
+      "id": "A3",
+      "prompt": "Item: A3\nFind closed form for sum of 2k-1, k=1..n"
+    },
+    {
+      "id": "A4",
+      "prompt": "Item: A4\nFind leapfrog dt for harmonic oscillator"
+    }
+  ],
+  "canary": {
+    "rate": 0.05
+  },
+  "canaries": [
+    {
+      "id": "KA",
+      "prompt": "Item: KA\nVerify sum of k^2 with n**3",
+      "answer": {
+        "verdict": "fail"
+      }
+    }
+  ]
+}

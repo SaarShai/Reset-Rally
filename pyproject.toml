@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "reset-rally"
+version = "0.1.0"
+description = "Pool expiring AI subscription quotas and idle local hardware for shared goals"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+rally-server = "rally.server:main"
+rally-worker = "rally.worker:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src", "tests"]
+testpaths = ["tests"]
+addopts = "-q -m 'not live'"
+markers = [
+    "live: real models through agent-roster run.sh (opt-in, uses plan quota)",
+    "slow: subprocess end-to-end tests"
+]
