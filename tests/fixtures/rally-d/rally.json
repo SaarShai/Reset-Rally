@@ -1,0 +1,27 @@
+{
+  "id": "tst-pair-sums",
+  "version": 1,
+  "title": "Sums of number pairs",
+  "owner": "tst-oscar",
+  "track": "brain",
+  "units": "units.jsonl",
+  "stages": {
+    "brain": {
+      "mode": "json",
+      "prompt": "Add A and B.\nA: ${a}\nB: ${b}\n",
+      "schema": {
+        "type": "object",
+        "required": ["sum"],
+        "properties": {"sum": {"type": "integer"}}
+      },
+      "needs": {"families": ["qwen"]},
+      "timeout_s": 60,
+      "lease_ttl_s": 300,
+      "points": 1
+    }
+  },
+  "verify": {
+    "mode": "deterministic",
+    "checks": [{"type": "numeric", "field": "sum", "min": 0}]
+  }
+}

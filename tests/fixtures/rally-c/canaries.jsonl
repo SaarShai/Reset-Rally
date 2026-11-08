@@ -1,0 +1,3 @@
+{"payload": {"text": "The KC-7 board takes a 12 V adapter. Its core supply is 1.8 V."}, "answer": {"component": "KC-7 core", "supply_v": 1.8}}
+{"payload": {"text": "The PB-2 probe needs a 24 V supply."}, "answer": {"component": "PB-2", "supply_v": 24}}
+{"payload": {"text": "The MV-5 meter takes a 9 V battery. Its logic supply is 2.5 V."}, "answer": {"component": "MV-5 logic", "supply_v": 2.5}}

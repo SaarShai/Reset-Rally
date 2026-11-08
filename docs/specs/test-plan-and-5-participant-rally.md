@@ -1,6 +1,6 @@
 # Test Plan and 5-Participant Mock Rally
 
-Status: design, 2026-11-08. No code exists yet. This plan tells the build which test seams to provide and which tests must pass.
+Status: design, 2026-11-08. For Phases 1-2, [phase-1-2-build-contract.md](phase-1-2-build-contract.md) replaces this plan: its tests are binding, and the Trust Score below is gone (canary failure counts decide quarantine). Rallies A and B (relay, brawn, holdout) and the Pre-Reset Drain tests wait for Phases 3-5.
 
 Companion: [architecture-and-build-plan.md](architecture-and-build-plan.md). If a name in this plan differs from the architecture spec, the architecture spec is correct. Rename here, do not change the tests' intent.
 

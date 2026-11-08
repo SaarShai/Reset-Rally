@@ -1,0 +1,5 @@
+{"id": "tst-doc-3c9e", "priority": 4, "payload": {"text": "The RX-100 regulator takes a 5.5 V supply."}}
+{"id": "tst-doc-a71f", "priority": 3, "payload": {"text": "The LM-20 amplifier runs from a 12 V supply."}}
+{"id": "tst-doc-5d02", "priority": 2, "payload": {"text": "The ZX-3 sensor runs at 3.3 V. Its I/O pins tolerate 5.0 V."}}
+{"id": "tst-doc-e48b", "priority": 1, "payload": {"text": "The QT-9 module uses a 9 V supply."}}
+{"id": "tst-doc-b260", "priority": 0, "payload": {"text": "The HD-4 display needs a 5 V supply."}}

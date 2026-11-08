@@ -1,0 +1,43 @@
+{
+  "id": "rct-outcomes",
+  "version": 1,
+  "title": "Structured outcomes from RCT abstracts (synthetic demo)",
+  "owner": "saar",
+  "track": "brain",
+  "units": "units.jsonl",
+  "canaries": "canaries.jsonl",
+  "stages": {
+    "brain": {
+      "mode": "json",
+      "prompt": "Read this trial abstract. Extract the facts. Use \"unclear\" when the abstract does not say, and null for a number it does not give. Give up to 4 exact quotes from the abstract that support your answer.\nTRIAL: ${trial}\nABSTRACT:\n${abstract}",
+      "schema": {
+        "type": "object",
+        "required": ["n_randomized", "design", "primary_met", "p_value", "quotes"],
+        "properties": {
+          "n_randomized": {"type": ["integer", "null"]},
+          "design": {"enum": ["parallel", "crossover", "cluster", "factorial", "unclear"]},
+          "primary_met": {"enum": ["yes", "no", "unclear"]},
+          "p_value": {"type": ["number", "null"]},
+          "quotes": {"type": "array", "items": {"type": "string", "maxLength": 400}, "maxItems": 4}
+        }
+      },
+      "needs": {"families": ["anthropic", "openai", "google"]},
+      "timeout_s": 240,
+      "lease_ttl_s": 600,
+      "points": 2
+    }
+  },
+  "verify": {
+    "mode": "quorum",
+    "checks": [{"type": "quote_span", "field": "quotes", "source": "abstract"}],
+    "quorum": {
+      "replicas": 2,
+      "agree": 2,
+      "distinct_families": true,
+      "fields": ["n_randomized", "design", "primary_met", "p_value"],
+      "max_replicas": 3,
+      "digits": 3
+    }
+  },
+  "canary": {"rate": 0.05, "quarantine_after": 2}
+}

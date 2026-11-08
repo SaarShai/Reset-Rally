@@ -1,0 +1,9 @@
+{
+  "server": "http://127.0.0.1:8787",
+  "token": "<written by rally-worker init>",
+  "projects": {},
+  "adapters": {
+    "claude": {"family": "anthropic", "model": "sonnet", "max_tasks": 20},
+    "codex": {"family": "openai", "max_tasks": 10}
+  }
+}

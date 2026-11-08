@@ -32,6 +32,7 @@ Take the first option that fully works:
 To start another AI agent or subagent, read `~/.agents/skills/agent-roster/SKILL.md` and run `~/.agents/skills/agent-roster/run.sh <agent> <workdir> <outdir> <name>`.
 - **Primary subagent for Reset Rally:** `agy/claude-opus-5-5-high` (Opus 5.5 on the `saar.shai@gmail.com` Antigravity / Google AI Pro plan).
 - **Quota fallback:** When `agy/claude-opus-5-5-high` reaches its usage limit (`Individual quota reached`), fall back to other Gemini/Antigravity agents on the account (`agy/gemini-3.8-flash-high`, `agy/claude-sonnet-5-5-high`, or `gemini-4-argon`).
+- **Accepting a slice:** a green suite alone does not prove a slice. Code in `src/` stays generic: project ids, participants, times and expected results come from the manifest, the database or the request, and imports come only from `rally` and the standard library. Before you mark a slice done, a reviewer on a different model than its author checks it for test-shaped code (fixture values or test imports in `src/`), and a mutation check breaks the slice's key rules in a copy of `src/` one at a time (`pytest -o pythonpath=<copy>`): every mutant must turn the suite red. Example of the failure: `docs/audits/2026-11-08-core-audit.md`.
 - **Logins and keys:** All logins are set up on this Mac. Never read, print, or copy a credential file or key.
 - **Commit trailers:** Never put model names in commits, pull requests, or code. Use the standard tool trailer from `agent-roster/SKILL.md`.
 
@@ -40,6 +41,7 @@ To start another AI agent or subagent, read `~/.agents/skills/agent-roster/SKILL
 ## 3. Writing Style & Execution Workflow
 
 - **Writing style:** Write in ASD-STE100 (Simplified Technical English): approved words, one meaning per word, short sentences, active voice, present tense. Apply Zinsser's four principles: simplicity, brevity, clarity, humanity. Brief every subagent whose output the user reads to use ASD-STE100.
+- **Autonomy (Saar, 2026-11-08):** do not ask Saar for approval. Take the next step you judge right (commits, pushes, live runs on his plans), and report what you did.
 - **Task tracking:** For substantive or uncertain work, record a short, checkable plan and its verification criteria in `tasks/todo.md`. Mark items complete as work progresses and record verification evidence there.
 - **Shared agent setup:** Keep `.agents/skills/` and `.claude/skills/` synchronized with `python3 bin/agent_parity.py --check`.
 

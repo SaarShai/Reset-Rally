@@ -1,0 +1,41 @@
+{
+  "id": "tst-supply-notes",
+  "version": 1,
+  "title": "Supply voltages from short part notes",
+  "owner": "tst-oscar",
+  "track": "brain",
+  "units": "units.jsonl",
+  "canaries": "canaries.jsonl",
+  "stages": {
+    "brain": {
+      "mode": "json",
+      "prompt": "Read the part note. Give the part it is about, its supply voltage in volts, and one exact quote from the note that states that voltage.\nNOTE:\n${text}",
+      "schema": {
+        "type": "object",
+        "required": ["component", "supply_v", "quote"],
+        "properties": {
+          "component": {"type": "string", "maxLength": 64},
+          "supply_v": {"type": "number", "minimum": 0, "maximum": 1000},
+          "quote": {"type": "string", "maxLength": 400}
+        }
+      },
+      "needs": {"families": ["anthropic", "openai", "google", "deepseek"]},
+      "timeout_s": 120,
+      "lease_ttl_s": 600,
+      "points": 2
+    }
+  },
+  "verify": {
+    "mode": "quorum",
+    "checks": [{"type": "quote_span", "field": "quote", "source": "text"}],
+    "quorum": {
+      "replicas": 2,
+      "agree": 2,
+      "distinct_families": true,
+      "fields": ["component", "supply_v"],
+      "max_replicas": 3,
+      "digits": 3
+    }
+  },
+  "canary": {"rate": 0.2, "quarantine_after": 2}
+}

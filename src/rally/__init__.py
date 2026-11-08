@@ -1,12 +1,1 @@
-"""Reset Rally: pool expiring AI subscription quotas and idle local hardware."""
-
-TRUST_START = 0.5
-CANARY_PASS = 0.1
-CANARY_FAIL = -0.5
-GATE1_REJECT = -0.1
-QUARANTINE_BELOW = 0.2
-TIEBREAK_MIN_TRUST = 0.6
-LEASE_TTL = 900  # 15 minutes
-MAX_ATTEMPTS_PER_PARTICIPANT = 2
-MAX_ATTEMPTS = 3
-MAX_OUTPUT_BYTES = 262_144
+"""Reset Rally: pool expiring AI subscription quota for shared projects."""
